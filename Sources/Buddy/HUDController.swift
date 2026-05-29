@@ -9,12 +9,17 @@ final class HUDController {
   private let model: BudsViewModel
   private var panel: NSPanel?
   private var dismissTask: Task<Void, Never>?
+  private var lastShown = Date.distantPast
 
   init(model: BudsViewModel) {
     self.model = model
   }
 
   func show() {
+    // Debounce: a connect event and a BLE burst can arrive together.
+    guard Date().timeIntervalSince(lastShown) > 1.5 else { return }
+    lastShown = Date()
+
     dismissTask?.cancel()
 
     let panel = panel ?? makePanel()
