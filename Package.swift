@@ -21,7 +21,7 @@ let package = Package(
     .target(name: "BudsTransport", dependencies: ["BudsProtocol"]),
     .target(name: "BudsCore", dependencies: ["BudsProtocol", "BudsTransport"]),
     .target(name: "BudsFeatures", dependencies: ["BudsCore"]),
-    .target(name: "BudsUI", dependencies: ["BudsCore"]),
+    .target(name: "BudsUI", dependencies: ["BudsCore"], resources: [.copy("Resources")]),
     // Re-enable once full Xcode (not just Command Line Tools) is installed —
     // XCTest / Testing aren't bundled with CLT, so SwiftPM can't build tests.
     // .testTarget(name: "BudsProtocolTests", dependencies: ["BudsProtocol"]),
