@@ -103,15 +103,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return out
   }
 
-  private static let buildTag = "send-path-11"
+  private static let buildTag = "reconnect-12"
 
   private func startConnectionMonitor() {
     connectionMonitor.onConnect = { [weak self] name in
       print("[BT] connected: \(name) → showing HUD")
       self?.model?.onSimulateCaseOpen?()
     }
-    connectionMonitor.onDisconnect = { name in
+    connectionMonitor.onDisconnect = { [weak self] name in
       print("[BT] disconnected: \(name)")
+      DispatchQueue.main.async {
+        guard let self else { return }
+        // Allow the control channel to reopen on the next reconnect.
+        self.didOpenControl = false
+        self.parser.reset()
+        self.model?.setDisconnected()
+      }
     }
     connectionMonitor.onServices = { [weak self] services in
       print("[SDP] \(services.count) service(s):")

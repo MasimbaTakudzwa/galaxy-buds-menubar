@@ -20,6 +20,11 @@ public final class BudsStreamParser {
 
   public init() {}
 
+  /// Drop any buffered partial frame (e.g. after a disconnect).
+  public func reset() {
+    buffer.removeAll()
+  }
+
   public func feed(_ bytes: [UInt8]) -> [BudsMessage] {
     buffer.append(contentsOf: bytes)
     var messages: [BudsMessage] = []

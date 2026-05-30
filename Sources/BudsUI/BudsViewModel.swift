@@ -41,6 +41,13 @@ public final class BudsViewModel: ObservableObject {
     onControl?(.setEQ(preset))
   }
 
+  /// Reflect a lost connection in the UI.
+  public func setDisconnected() {
+    withAnimation(.easeOut(duration: 0.2)) {
+      isConnected = false
+    }
+  }
+
   /// Push a decoded status frame from the buds into the UI.
   public func apply(_ status: BudsStatus) {
     isConnected = true
