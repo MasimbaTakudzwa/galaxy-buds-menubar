@@ -7,7 +7,8 @@ on:
 
 jobs:
   build-test:
-    runs-on: macos-14
+    # macos-15 ships Xcode 16, which bundles the Swift Testing module.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
