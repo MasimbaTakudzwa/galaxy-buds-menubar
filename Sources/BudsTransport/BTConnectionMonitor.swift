@@ -20,6 +20,7 @@ public final class BTConnectionMonitor: NSObject, IOBluetoothRFCOMMChannelDelega
   public var onServices: (([DiscoveredService]) -> Void)?
   public var onControlOpen: ((Int32) -> Void)?
   public var onControlData: ((Data) -> Void)?
+  public var onWrite: (([UInt8], Int32) -> Void)?
 
   private var connectNotification: IOBluetoothUserNotification?
   private var disconnectNotifications: [IOBluetoothUserNotification] = []
@@ -57,6 +58,16 @@ public final class BTConnectionMonitor: NSObject, IOBluetoothRFCOMMChannelDelega
     } else {
       onControlOpen?(result)
     }
+  }
+
+  /// Write a pre-framed command to the control channel.
+  public func send(_ bytes: [UInt8]) {
+    guard let channel = controlChannel else { onWrite?(bytes, -1); return }
+    var buffer = bytes
+    let result = buffer.withUnsafeMutableBytes { raw -> IOReturn in
+      channel.writeAsync(raw.baseAddress, length: UInt16(bytes.count), refcon: nil)
+    }
+    onWrite?(bytes, result)
   }
 
   // MARK: IOBluetoothRFCOMMChannelDelegate
