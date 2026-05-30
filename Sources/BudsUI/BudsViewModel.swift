@@ -1,5 +1,6 @@
 import SwiftUI
 import BudsCore
+import BudsProtocol
 
 @MainActor
 public final class BudsViewModel: ObservableObject {
@@ -27,6 +28,20 @@ public final class BudsViewModel: ObservableObject {
   public func selectEQ(_ preset: EQPreset) {
     withAnimation(.easeOut(duration: 0.2)) {
       device.equalizer = preset
+    }
+  }
+
+  /// Push a decoded status frame from the buds into the UI.
+  public func apply(_ status: BudsStatus) {
+    isConnected = true
+    withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
+      if let left = status.leftBattery { device.leftBattery = left }
+      if let right = status.rightBattery { device.rightBattery = right }
+      device.caseBattery = status.caseBattery   // nil until we pin the offset
+      // Charging state isn't decoded yet — clear the mock bolts.
+      device.leftCharging = false
+      device.rightCharging = false
+      device.caseCharging = false
     }
   }
 }

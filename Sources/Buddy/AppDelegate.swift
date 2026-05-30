@@ -1,5 +1,6 @@
 import AppKit
 import CoreBluetooth
+import BudsProtocol
 import BudsCore
 import BudsTransport
 import BudsUI
@@ -12,6 +13,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let connectionMonitor = BTConnectionMonitor()
   private var lastPayload: [UUID: String] = [:]
   private var discoverable: [UUID: Bool] = [:]
+  private var didOpenControl = false
+  private var channelOverride: Int?
+  private let parser = BudsStreamParser()
 
   /// Base advertisement is ~26 bytes; the discoverable ("lid open") burst
   /// appends an extra block, pushing it past this threshold.
@@ -19,6 +23,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     print("=== Buddy 0.1 — BLE detect + BT connect monitor (build \(Self.buildTag)) ===")
+    if let idx = CommandLine.arguments.firstIndex(of: "--channel"),
+       idx + 1 < CommandLine.arguments.count,
+       let n = Int(CommandLine.arguments[idx + 1]) {
+      channelOverride = n
+      print("[RFCOMM] channel override = \(n)")
+    }
     NSApp.setActivationPolicy(.accessory)
 
     let model = BudsViewModel.mock()
@@ -29,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     startBLEDetection()
   }
 
-  private static let buildTag = "connect-monitor-1"
+  private static let buildTag = "verbose-9"
 
   private func startConnectionMonitor() {
     connectionMonitor.onConnect = { [weak self] name in
@@ -39,7 +49,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     connectionMonitor.onDisconnect = { name in
       print("[BT] disconnected: \(name)")
     }
+    connectionMonitor.onServices = { [weak self] services in
+      print("[SDP] \(services.count) service(s):")
+      for service in services {
+        let channel = service.rfcommChannelID.map { "RFCOMM ch \($0)" } ?? "no-rfcomm"
+        print("[SDP]   • \(service.name ?? "(unnamed)")  uuid=\(service.uuid ?? "?")  [\(channel)]")
+      }
+      self?.openControlChannel(from: services)
+    }
+    connectionMonitor.onControlOpen = { status in
+      print("[RFCOMM] open complete: status=\(status) \(status == 0 ? "(OK — listening)" : "(error)")")
+    }
+    connectionMonitor.onControlData = { [weak self] data in
+      // IOBluetooth delivers on a background thread; hop to main before we
+      // touch the parser state or the SwiftUI model.
+      DispatchQueue.main.async {
+        guard let self else { return }
+        for message in self.parser.feed([UInt8](data)) {
+          self.log(message)
+        }
+      }
+    }
     connectionMonitor.start()
+  }
+
+  private func openControlChannel(from services: [DiscoveredService]) {
+    guard !didOpenControl else { return }
+    // Match GEARMANAGER by its stable UUID (the SDP name field is sometimes empty).
+    let channel = channelOverride
+      ?? services.first(where: { ($0.uuid ?? "").lowercased().contains("2e73a4ad") })?.rfcommChannelID
+      ?? services.first(where: { $0.name == "GEARMANAGER" })?.rfcommChannelID
+    guard let channel else {
+      print("[RFCOMM] GEARMANAGER not found — pass --channel 27 to force it")
+      return
+    }
+    didOpenControl = true
+    print("[RFCOMM] opening channel \(channel)…")
+    connectionMonitor.openControlChannel(channel)
+  }
+
+  private func log(_ message: BudsMessage) {
+    // Only the two status messages matter; silence the buds' 0xf2/0xf4 debug spam.
+    guard message.id == 0x60 || message.id == 0x61 else { return }
+
+    let idHex = String(format: "0x%02x", message.id)
+    let hex = message.payload.map { String(format: "%02x", $0) }.joined(separator: " ")
+    print("[MSG] id=\(idHex) len=\(message.payload.count)  payload= \(hex)")
+    let candidates = message.payload.enumerated()
+      .filter { (1...100).contains($0.element) }
+      .map { "p[\($0.offset)]=\($0.element)" }
+      .joined(separator: " ")
+    print("[MSG]   candidates(1–100): \(candidates)")
+
+    guard let status = BudsStatusDecoder.decode(message) else { return }
+    func fmt(_ value: Int?) -> String { value.map(String.init) ?? "–" }
+    print("[BATTERY] left=\(fmt(status.leftBattery)) right=\(fmt(status.rightBattery)) case=\(fmt(status.caseBattery))")
+    model?.apply(status)
   }
 
   private func startBLEDetection() {
