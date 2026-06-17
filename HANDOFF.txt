@@ -1,0 +1,48 @@
+===================================================================
+ PROJECT HANDOFF - Buddy
+ Generated 2026-06-17 during a backup-and-archive-to-external-drive pass.
+===================================================================
+
+WHAT THIS IS
+  galaxy-buds-menubar: macOS menubar app for Galaxy Buds.
+
+GITHUB (primary backup - all branches pushed, working tree was clean at archive)
+  Remote: https://github.com/MasimbaTakudzwa/galaxy-buds-menubar.git
+
+RESTORE / RESUME WHERE I LEFT OFF
+  This folder was copied to the external drive and may have been removed
+  from the laptop to free space. To resume work:
+    git clone https://github.com/MasimbaTakudzwa/galaxy-buds-menubar.git Buddy
+    cd Buddy
+    (check README for setup)
+
+CLAUDE CODE SESSIONS (IMPORTANT)
+  Claude Code keys session history to the project's absolute path, which was:
+    /Users/simsbgang/DevProjects/Buddy
+  Moving or deleting this folder breaks automatic session continuity.
+  Transcripts live under ~/.claude/projects/ (encoded by that path).
+  To get context back: clone/restore to the SAME path (/Users/simsbgang/DevProjects/Buddy) before
+  reopening Claude Code; or start a fresh session and have Claude read this
+  HANDOFF.txt plus the recent commits below.
+
+BRANCHES AT ARCHIVE TIME (current branch: main)
+  main  | last commit 3 weeks ago
+
+RECENT WORK - last 15 commits on main
+  68d580b  2026-05-30  CI: use macos-15 runner (Xcode 16) for Swift Testing
+  54901a5  2026-05-30  Add full GPL-3.0 license text
+  a95d08c  2026-05-30  Reopen control channel on reconnect; reflect disconnects in UI
+  214ed2d  2026-05-30  Add protocol test suite and GitHub Actions CI
+  7318e7b  2026-05-30  Docs: PROTOCOL.md, TESTING.md, and rewritten README
+  197a01e  2026-05-30  Add verified frame encoder and two-way command send path
+  59df080  2026-05-30  Decode live battery over RFCOMM and wire it into the UI
+  e8db551  2026-05-29  Add real buds detection: BLE scan + classic BT connect monitor
+  01108c4  2026-05-29  Add menubar UI mock: battery rings, ANC control, EQ, 3D buds model
+  007f6d0  2026-04-30  Initial scaffold: menubar app + protocol/transport/core stubs
+
+UNCOMMITTED AT ARCHIVE (kept local on purpose - on the drive copy only, NOT on GitHub)
+  ?? HANDOFF.txt
+
+DRIVE ARCHIVE LOCATION
+  /Volumes/Untitled/DevProjects-backup/Buddy
+===================================================================
