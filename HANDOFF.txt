@@ -1,34 +1,162 @@
 ===================================================================
- PROJECT HANDOFF - Buddy
- Generated 2026-06-17 during a backup-and-archive-to-external-drive pass.
+ PROJECT HANDOFF - Buddy  (galaxy-buds-menubar)
+ Last updated 2026-06-17 during a backup-and-archive-to-external-drive pass.
+ Read this single file to resume cold, possibly in a fresh Claude Code
+ session with no memory. Everything below was derived from reading the
+ code/docs/git on 2026-06-17; working tree was CLEAN at archive time.
 ===================================================================
 
-WHAT THIS IS
-  galaxy-buds-menubar: macOS menubar app for Galaxy Buds.
 
-GITHUB (primary backup - all branches pushed, working tree was clean at archive)
-  Remote: https://github.com/MasimbaTakudzwa/galaxy-buds-menubar.git
+1. WHAT THIS IS
+-------------------------------------------------------------------
+- A native macOS menubar app that talks to Samsung Galaxy Buds (the
+  author's pair: Galaxy Buds 3 FE) directly over Bluetooth, with no
+  Samsung phone or Galaxy Wearable app involved.
+- Goal: an AirPods-style experience on the Mac - battery for Left/Right/
+  Case, ANC mode, and EQ preset from the menubar, plus an AirPods-style
+  "Connect" HUD that pops when you open the case / reconnect.
+- Platform: macOS 14+ (Sonoma). Menubar-only app (LSUIElement, no Dock icon).
+- Audience: personal use by the author (Masimba), released as open source
+  under GPL-3.0-or-later. Protocol reverse-engineered from live captures;
+  framing follows the well-known ThePBone/GalaxyBudsClient project.
 
-RESTORE / RESUME WHERE I LEFT OFF
-  This folder was copied to the external drive and may have been removed
-  from the laptop to free space. To resume work:
-    git clone https://github.com/MasimbaTakudzwa/galaxy-buds-menubar.git Buddy
-    cd Buddy
-    (check README for setup)
 
-CLAUDE CODE SESSIONS (IMPORTANT)
-  Claude Code keys session history to the project's absolute path, which was:
-    /Users/simsbgang/DevProjects/Buddy
-  Moving or deleting this folder breaks automatic session continuity.
-  Transcripts live under ~/.claude/projects/ (encoded by that path).
-  To get context back: clone/restore to the SAME path (/Users/simsbgang/DevProjects/Buddy) before
-  reopening Claude Code; or start a fresh session and have Claude read this
-  HANDOFF.txt plus the recent commits below.
+2. TECH STACK & ARCHITECTURE
+-------------------------------------------------------------------
+LANGUAGE / FRAMEWORK
+- Swift (swift-tools-version 5.10), built with Swift Package Manager.
+  NOT Electron, NOT Tauri - 100% native Swift.
+- UI: SwiftUI components hosted in AppKit (NSStatusItem menubar + NSPopover
+  panel + NSPanel HUD). 3D earbud view uses SceneKit/RealityKit-style USDZ
+  loading with a procedural fallback.
+- Bluetooth: TWO Apple frameworks used together:
+    * CoreBluetooth (BLE) -> passive scan for Samsung manufacturer adverts
+      (company ID 0x0075); used only to detect "lid opened" via payload-
+      length jump. Contents are encrypted; we never decode them.
+    * IOBluetooth (Classic BT) -> the real control path: connect/disconnect
+      notifications, SDP service query, and the RFCOMM channel we read
+      battery from and write commands to.
+- No third-party dependencies. No Package.resolved (nothing to resolve).
 
-BRANCHES AT ARCHIVE TIME (current branch: main)
-  main  | last commit 3 weeks ago
+DIRECTORY LAYOUT  (Sources/<target>/...)
+  Package.swift              SPM manifest: 1 executable + 5 libraries + 1 test target
+  Sources/
+    Buddy/                   EXECUTABLE - the app itself
+      BuddyApp.swift         @main entry point (SwiftUI App + NSApplicationDelegateAdaptor)
+      AppDelegate.swift      *** THE BRAIN *** - wires scanner+monitor+parser+UI,
+                             owns all the live BLE/BT/RFCOMM coordination + CLI flags
+      MenuBarController.swift NSStatusItem ("earbuds" SF Symbol) + popover + HUD glue
+      HUDController.swift     The AirPods-style connect NSPanel
+    BudsProtocol/            *** REAL, VERIFIED wire protocol (SOM=0xFD) ***
+      Encoder.swift          CRC-16/XMODEM + frame encoder + selfTest()
+      StreamParser.swift     Buffering frame reassembler (handles split/concat reads)
+      BudsStatus.swift       Battery/placement decoder (offsets verified on hardware)
+      Commands.swift         ANC/EQ opcodes (CANDIDATE - unverified, see below)
+      Frame.swift            *** DEAD/OLD scaffold (SOM=0xFE) - NOT used by the app ***
+    BudsTransport/
+      AdvertScanner.swift    CoreBluetooth BLE scanner (recon/lid-open detection)
+      BTConnectionMonitor.swift  IOBluetooth: connect/disconnect + SDP + RFCOMM read/write
+      RFCOMMChannel.swift    *** DEAD/OLD stub actor - NOT used by the app ***
+    BudsCore/
+      BudsDevice.swift       Domain model: BudsDevice, ANCMode, EQPreset, .mock fixture
+      BudsManager.swift      *** DEAD/OLD stub actor (wraps the dead RFCOMMChannel) ***
+    BudsFeatures/
+      ANCController.swift    Tiny ANC-cycle helper (10 lines, barely used)
+    BudsUI/                  SwiftUI views (battery rings, ANC segmented control,
+      BudsViewModel.swift    EQ rows, 3D model, panel, connect HUD)
+      ...                    Resources/ holds a PLACEHOLDER.md for buds3fe.usdz drop-in
+  Tests/BudsProtocolTests/ProtocolTests.swift   Swift Testing suite for the protocol layer
+  Packaging/make-app.sh      Assembles + ad-hoc-signs a runnable Buddy.app bundle
+  Packaging/Info.plist       Bundle ID com.chrisgangaidzo.buddy, BT usage strings, LSUIElement
+  .github/workflows/ci.yml   GitHub Actions: swift build + swift test on macos-15
+  README.md / PROTOCOL.md / TESTING.md   *** read these too - they are accurate ***
 
-RECENT WORK - last 15 commits on main
+ENTRY POINT & FLOW
+- BuddyApp (@main) -> AppDelegate.applicationDidFinishLaunching:
+    1. prints build banner + runs encoder selfTest
+    2. parses CLI flags (--channel N, --send AABB)
+    3. sets activation policy .accessory (menubar-only)
+    4. builds BudsViewModel.mock(), creates MenuBarController
+    5. starts BTConnectionMonitor (classic BT) + AdvertScanner (BLE)
+- On classic-BT connect: shows HUD, performs SDP query, finds GEARMANAGER
+  service (match by UUID 2e73a4ad..., channel 27), opens RFCOMM channel.
+- Incoming RFCOMM bytes -> BudsStreamParser.feed() -> BudsMessage(s) ->
+  BudsStatusDecoder -> BudsViewModel.apply() updates the SwiftUI battery rings.
+- ANC/EQ clicks in the panel -> BudsViewModel.onControl -> AppDelegate.sendControl
+  -> BudsCommand.noiseControl/equalizer -> BTConnectionMonitor.send().
+
+CONVENTIONS
+- Diagnostic logging is the primary debugging tool: run from Terminal to see
+  [BLE], [BT], [SDP], [RFCOMM], [SEND], [MSG], [MSG?], [BATTERY], [SELFTEST].
+- Build identity tag lives in AppDelegate.buildTag (currently "reconnect-12");
+  bump it when iterating so the banner tells you which build is running.
+- Opcodes/wire mappings that are unconfirmed are marked "CANDIDATE" and made
+  `var` so they're trivial to retune once verified on hardware.
+- IMPORTANT - there are TWO protocol stacks in the repo. The LIVE one is
+  BudsProtocol/Encoder+StreamParser+BudsStatus (SOM 0xFD/EOM 0xDD), driven
+  directly by AppDelegate. The OLD scaffold (Frame.swift/BudsFrameCodec with
+  SOM 0xFE, RFCOMMChannel actor, BudsManager) is leftover dead code from the
+  initial commit and is NOT referenced by the running app. Don't be misled
+  by it; consider deleting it (see KNOWN ISSUES).
+
+
+3. CURRENT STATE  (honest)
+-------------------------------------------------------------------
+MATURITY: early but real. ~1640 lines of Swift across 24 files. Single commit
+burst of real work on 2026-05-29/30, then dormant. NOT released as a binary
+(no tagged release, no .dmg, no notarization). It IS clearly intended as an
+open-source project: GPL-3.0 LICENSE committed, README written for outside
+readers, CI configured, credits given to GalaxyBudsClient. REMEMBER: the repo
+is PUBLIC, so never commit captures containing BT MAC addresses or anything
+you wouldn't publish.
+
+WHAT WORKS (verified on the author's hardware):
+  [OK] BLE lid-open detection -> fires the Connect HUD (payload length jump)
+  [OK] Classic-BT connect/disconnect detection (the correct trigger for a
+       paired device); disconnect reflects in UI and re-arms the channel
+  [OK] SDP query finds GEARMANAGER service, RFCOMM channel 27 opens
+  [OK] Live battery: Left/Right/Case decoded from status frames 0x60/0x61,
+       shown in the menubar panel rings + HUD (matched the phone's readings)
+  [OK] Frame encoder is byte-for-byte verified (CRC-16/XMODEM selfTest passes
+       against a real captured 0x61 frame)
+  [OK] Stream parser handles split/concatenated/garbage reads (unit-tested)
+
+WHAT IS IN PROGRESS / STUBBED:
+  [WIP] ANC + EQ CONTROL - the full send path is wired (panel click -> encoder
+        -> RFCOMM write) and frames are valid, BUT the Buds 3 FE opcodes
+        (0x79 ANC, 0x86 EQ) and value mappings are CANDIDATES copied from older
+        Buds models. They have NOT been confirmed to actually change anything
+        on the 3 FE. This is the single biggest open item.
+  [WIP] ANC-mode READBACK - we don't yet know which status byte encodes the
+        current noise mode, so the ANC segmented control can't reflect reality.
+  [WIP] Case-battery offset - decoded but flagged "nil until we pin the offset"
+        in BudsViewModel.apply; reported only while docked.
+  [STUB/DEAD] Charging-state decode (not decoded; mock bolts cleared on apply).
+  [STUB/DEAD] RFCOMMChannel actor, BudsManager actor, Frame.swift/BudsFrameCodec,
+        ANCController - leftover scaffolding, unused by the app.
+  [STUB] Settings window = literal "Buddy settings - coming soon" text.
+  [MISSING] No buds3fe.usdz 3D model shipped (procedural fallback renders);
+        Resources/ holds only PLACEHOLDER.md.
+
+TEST / BUILD HEALTH:
+- swift build: expected green (no external deps; was building locally - a
+  .build/ tree exists). NOT re-run during this archive pass (read-only).
+- Tests use Apple's "Swift Testing" framework. They run under FULL Xcode
+  (and on CI: macos-15 / Xcode 16). With Command Line Tools alone, `swift
+  test` is effectively a no-op locally (Testing module not bundled) - this is
+  expected and documented in Package.swift. The protocol suite is solid:
+  CRC check value, encoder framing, parser reassembly/resync, status decode.
+- CI (.github/workflows/ci.yml) runs swift build + swift test on push to main
+  and on PRs. CI status as of archive: unknown (not checked); the last code
+  commits were the ones that added/green-fixed CI, so it was presumably green.
+
+
+4. RECENT WORK  (narrative; branch = main)
+-------------------------------------------------------------------
+Full history is short - 11 commits. The substantive work happened in one
+two-day sprint (2026-05-29 -> 05-30); the only thing since was this handoff doc.
+
+  7e19a35  2026-06-17  docs: add HANDOFF.txt (this file's prior version)
   68d580b  2026-05-30  CI: use macos-15 runner (Xcode 16) for Swift Testing
   54901a5  2026-05-30  Add full GPL-3.0 license text
   a95d08c  2026-05-30  Reopen control channel on reconnect; reflect disconnects in UI
@@ -40,9 +168,179 @@ RECENT WORK - last 15 commits on main
   01108c4  2026-05-29  Add menubar UI mock: battery rings, ANC control, EQ, 3D buds model
   007f6d0  2026-04-30  Initial scaffold: menubar app + protocol/transport/core stubs
 
-UNCOMMITTED AT ARCHIVE (kept local on purpose - on the drive copy only, NOT on GitHub)
-  ?? HANDOFF.txt
+ARC OF THE WORK: started as a UI mock + protocol scaffold (the now-dead stubs),
+then in late May pivoted to a real implementation: proved detection, proved
+the frame format + CRC, got live battery on screen, wired the send path, wrote
+docs + tests + CI, and hardened reconnect handling. It stopped right at the
+point of needing on-hardware opcode confirmation for ANC/EQ.
 
-DRIVE ARCHIVE LOCATION
-  /Volumes/Untitled/DevProjects-backup/Buddy
+UNCOMMITTED CHANGES AT ARCHIVE: none. Working tree was clean (this HANDOFF.txt
+overwrite is the only local edit and is intentionally NOT auto-committed).
+
+
+5. WHERE TO PICK UP   *** MOST IMPORTANT ***
+-------------------------------------------------------------------
+The read path is done. The next milestone is making ANC + EQ actually CONTROL
+the buds (true two-way control), which requires a short on-hardware session.
+You need the physical Galaxy Buds 3 FE paired to the Mac to do this.
+
+STEP 1 - Confirm nothing regressed (5 min, with buds connected):
+  Build + run from Terminal (see section 7) and confirm the six checks in
+  TESTING.md section 1: build banner, [SELFTEST] encoder = PASS, channel 27
+  opens (status=0), [BATTERY] matches your phone, panel rings correct, HUD pops.
+
+STEP 2 - Find the ANC-mode status byte (passive, safe) - TESTING.md section 2:
+  With buds in your ears and Buddy running, change the noise mode ON THE PHONE
+  (Off -> Ambient -> ANC -> Adaptive), copying the "[MSG] id=0x61 payload=" line
+  after each. The byte that changes is the ANC offset. Then ADD that offset to
+  BudsStatusDecoder.decode() in Sources/BudsProtocol/BudsStatus.swift (extend
+  BudsStatus with an `ancMode` field and decode it), and have
+  BudsViewModel.apply() in Sources/BudsUI/BudsViewModel.swift set
+  device.ancMode so the segmented control reflects reality.
+
+STEP 3 - Find the ANC *send* opcode (active probe) - TESTING.md section 3:
+  Click ANC in the panel first; if nothing changes, sweep candidates from the
+  CLI (worst case = harmless no-op, CRC is valid):
+      ./.build/debug/Buddy.app/Contents/MacOS/Buddy --send 7901
+      ...try 7900/7902 and other msgIDs 7801/9801/9a01 with payloads 00/01/02
+  Watch your ears + the [MSG] 0x61 ANC byte. The (msgID,payload) that flips the
+  mode is the real command. Then update Sources/BudsProtocol/Commands.swift:
+  set BudsOpcode.noiseControl and fix the value mapping in
+  AppDelegate.ancWireValue() (Sources/Buddy/AppDelegate.swift, ~line 82).
+
+STEP 4 - Same for EQ - TESTING.md section 4: confirm/fix BudsOpcode.equalizer
+  (0x86) and AppDelegate.eqWireValue().
+
+FILES YOU WILL EDIT for this milestone:
+  Sources/BudsProtocol/BudsStatus.swift   (decode ANC-mode byte)
+  Sources/BudsProtocol/Commands.swift     (real opcodes)
+  Sources/Buddy/AppDelegate.swift         (wire value mappings; ~lines 81-90)
+  Sources/BudsUI/BudsViewModel.swift      (reflect real ANC mode in UI)
+
+"DONE" FOR THIS MILESTONE LOOKS LIKE:
+  - Clicking an ANC mode in the panel audibly changes the buds' noise mode.
+  - Clicking an EQ preset audibly changes the EQ.
+  - The ANC segmented control shows the buds' ACTUAL current mode (read back
+    from status), staying in sync when you change it from the phone too.
+  - PROTOCOL.md "candidate"/unverified rows get upgraded to verified.
+
+AFTER THAT (the README's remaining unchecked roadmap items):
+  - Auto-reconnect on wake; launch-at-login; a real Settings window
+    (replace the placeholder in BuddyApp.swift); packaging/notarization polish.
+
+
+6. KNOWN ISSUES / TODOS
+-------------------------------------------------------------------
+- CANDIDATE/UNVERIFIED opcodes are the headline gap (Commands.swift,
+  AppDelegate.swift). See section 5.
+- DEAD CODE to clean up (carried since the initial scaffold, unused by the app):
+    * Sources/BudsProtocol/Frame.swift  (BudsFrame/BudsFrameCodec, SOM 0xFE -
+      conflicts conceptually with the real 0xFD protocol; confusing to keep)
+    * Sources/BudsTransport/RFCOMMChannel.swift  (stub actor)
+    * Sources/BudsCore/BudsManager.swift  (stub actor wrapping the above)
+    Note: BudsProtocolTests does NOT touch these, so deletion is low-risk, but
+    Package.swift exports BudsTransport/BudsCore as libraries - just remove the
+    files, the targets stay. Verify `swift build` after.
+- TODO/FIXME markers found (all are the "candidate/placeholder/stub" notes above):
+    Frame.swift:5 "Layout placeholder - verify..."
+    Commands.swift:5 "CANDIDATE VALUES ... NOT been verified on Buds 3 FE"
+    AppDelegate.swift:81 "CANDIDATE wire mappings - verify on hardware"
+    RFCOMMChannel.swift:9 "Stub: real implementation will..."
+- Case battery + charging state not fully decoded (BudsStatus / apply()).
+- Settings window is a placeholder string (BuddyApp.swift).
+- No 3D model asset shipped (Resources/PLACEHOLDER.md). For a PUBLIC repo, only
+  ship a self-made or properly-licensed USDZ - Samsung's models are copyrighted.
+- Hardcoded assumptions: name filter "buds", GEARMANAGER UUID prefix 2e73a4ad,
+  channel 27. Other Galaxy Buds models may differ.
+- Tests can't run under plain Command Line Tools; need full Xcode locally
+  (CI covers it on macos-15).
+
+
+7. HOW TO RUN & DEVELOP
+-------------------------------------------------------------------
+PREREQS: macOS 14+. Swift toolchain (Xcode Command Line Tools) is enough to
+BUILD and RUN. FULL Xcode is needed only to run the test target locally and for
+a notarized release. A real Bluetooth Mac + paired Galaxy Buds for live testing.
+
+WHY A BUNDLE: CoreBluetooth needs a real, signed .app with an Info.plist
+Bluetooth usage string to get TCC permission - a bare SPM binary won't get the
+prompt. So always run via the bundle, not `swift run`.
+
+BUILD + RUN (from the project root):
+    ./Packaging/make-app.sh debug
+    ./.build/debug/Buddy.app/Contents/MacOS/Buddy
+  (make-app.sh does: swift build -c debug, assembles Buddy.app, copies the
+   Info.plist + SwiftPM resource bundles, then ad-hoc codesigns it.)
+  Release variant: ./Packaging/make-app.sh release
+
+  Run from Terminal (not by double-clicking) so you see the diagnostic log.
+  An "earbuds" icon appears in the menubar; click it for the panel. Ctrl-C quits.
+  First run: grant Bluetooth permission in System Settings > Privacy & Security.
+
+USEFUL CLI FLAGS:
+    --channel N     force a specific RFCOMM channel (e.g. --channel 27)
+    --send AABB     send raw frame (msgID AA, payload BB) ~0.6s after connect,
+                    repeatable - the opcode-probing harness used in section 5
+
+TESTS:
+    swift test      (needs full Xcode; runs on CI via .github/workflows/ci.yml)
+
+ENV VARS / SECRETS: none. No API keys, no .env, no external services. Nothing
+to configure beyond granting the Bluetooth permission.
+
+SIGNING/NOTARIZATION: currently ad-hoc signed only (codesign --sign -). For a
+real distributable release you'd need a Developer ID cert + notarization; not
+set up yet.
+
+
+8. GITHUB & BRANCHES
+-------------------------------------------------------------------
+- Remote (origin): https://github.com/MasimbaTakudzwa/galaxy-buds-menubar.git
+  *** PUBLIC repository *** - assume anything pushed is world-readable. Do not
+  push BT captures with MAC addresses, personal identifiers, or copyrighted
+  3D models.
+- Current branch: main. It is the only branch (local `main`, remote
+  `origin/main`). No other branches, no tags, no open PRs known.
+- At archive time the working tree was clean and main was up to date with
+  origin/main, so GitHub is a complete primary backup of committed work.
+  (This HANDOFF.txt's latest overwrite is the only uncommitted change.)
+
+
+9. RESTORE & CLAUDE SESSIONS
+-------------------------------------------------------------------
+CLAUDE CODE SESSION CONTINUITY (important):
+  Claude Code keys session history to the project's ABSOLUTE PATH, which is:
+      /Users/simsbgang/DevProjects/Buddy
+  Transcripts live under ~/.claude/projects/ encoded by that path. Moving,
+  renaming, or deleting this folder breaks automatic session continuity.
+  To get prior Claude context back, restore to the SAME path before reopening
+  Claude Code. Otherwise, just start a fresh session and have Claude read this
+  HANDOFF.txt plus the recent commits in section 4 - that's enough to resume.
+
+RESTORE OPTIONS (restore to the SAME path: /Users/simsbgang/DevProjects/Buddy):
+  A) From GitHub (primary backup):
+       git clone https://github.com/MasimbaTakudzwa/galaxy-buds-menubar.git \
+         /Users/simsbgang/DevProjects/Buddy
+       cd /Users/simsbgang/DevProjects/Buddy
+  B) From the external drive (full copy incl. any uncommitted/local files):
+       cp -R /Volumes/Untitled/DevProjects-backup/Buddy \
+         /Users/simsbgang/DevProjects/Buddy
+       cd /Users/simsbgang/DevProjects/Buddy
+
+THEN BUILD + RUN to confirm it's alive:
+       ./Packaging/make-app.sh debug
+       ./.build/debug/Buddy.app/Contents/MacOS/Buddy
+  (.build/ is gitignored, so a fresh git clone rebuilds from scratch on first
+   make-app.sh - expected. The drive copy may already contain a .build/ tree.)
+
+WHERE TO GO NEXT after restoring: re-read section 5 of this file and TESTING.md,
+connect the buds, and confirm/fix the ANC + EQ opcodes.
+
+===================================================================
+ SUMMARY: Working battery read-path over RFCOMM is done and verified; the
+ verified encoder + send path is built but the ANC/EQ opcodes for the Buds 3 FE
+ are still unconfirmed candidates. PICK UP HERE: with the buds connected, run
+ the TESTING.md ANC probe (section 5/STEP 2-3) to nail down the real ANC-mode
+ status byte and send opcode, then update Commands.swift + AppDelegate's wire
+ mappings + BudsStatus.swift so ANC/EQ become real two-way controls.
 ===================================================================
